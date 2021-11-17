@@ -123,6 +123,10 @@
           }
         }
       }
-    }},
-  "defaultProject": "http-interceptor-example"
+    }
+  },
+  "defaultProject": "http-interceptor-example",
+  "cli": {
+    "analytics": false
+  }
 }
