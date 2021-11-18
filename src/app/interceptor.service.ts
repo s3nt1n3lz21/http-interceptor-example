@@ -1,50 +1,69 @@
 import { Injectable } from '@angular/core';
 import { HttpErrorResponse, HttpHeaders, HttpInterceptor, HttpResponse } from '@angular/common/http';
 import { HttpRequest } from '@angular/common/http';
-import { Observable, throwError } from 'rxjs';
+import { BehaviorSubject, Observable, of, throwError } from 'rxjs';
 import { HttpHandler } from '@angular/common/http';
 import { HttpEvent } from '@angular/common/http';
 // import { FacadeService } from '../service/facade.service';
-import { catchError, finalize, retry, tap } from 'rxjs/operators';
+import { catchError, filter, finalize, retry, switchMap, take, tap } from 'rxjs/operators';
 import { ConsoleService } from './console.service';
 import { NotificationService } from './notification.service';
+import { request } from 'http';
 
 @Injectable({
   providedIn: 'root'
 })
 export class InterceptorService implements HttpInterceptor {
   token: string;
+  // We can cache API responses as we intercept them
+  private cache = new Map<string, any>();
+  private refreshTokenInProgress = false;
+  private refreshTokenSubject: BehaviorSubject<any> = new BehaviorSubject<any>(null);
+
   constructor(
     private consoleService: ConsoleService,
     private notificationService: NotificationService
     ) { }
 
   intercept(req: HttpRequest<any>, next: HttpHandler): Observable<HttpEvent<any>> {
-    let newReq: HttpRequest<any>;
 
     // We can add the users authorisation token to the header
-    // for all apis that arent the password resetting, password forgot or user account activation apis
-    if (!req.url.includes('/password/reset') && !req.url.includes('/password/forgot') && !req.url.includes('/user/activate')) {
-      const headersWithAuth = new HttpHeaders({
-        'Authorization': `Bearer ${this.token}`,
-        'Content-Type': 'application/json; charset=utf-8'
-      });
+    // for all apis that arent the login, password resetting, password forgot or user account activation apis
+    if (!req.url.includes('/login') && !req.url.includes('/password/reset') && !req.url.includes('/password/forgot') && !req.url.includes('/user/activate')) {
+      if (this.token) {
+        const headersWithAuth = new HttpHeaders({
+          'Authorization': `Bearer ${this.token}`,
+        });
 
-      newReq = req.clone({ headers: headersWithAuth });
+        req = req.clone({ headers: headersWithAuth });
+      }
+
     } else {
-      const headersNoAuth = new HttpHeaders({
-        'Content-Type': 'application/json; charset=utf-8'
-      });
+      // Otherwise send the users login details
+      req = req.clone({ withCredentials: true });
+    }
 
-      newReq = req.clone({ headers: headersNoAuth, withCredentials: true });
+    // Add the content-type header
+    if (!req.headers.has('Content-Type')) {
+      req = req.clone({
+        headers: req.headers.set('Content-Type', 'application/json; charset=utf-8')
+      });
     }
 
     // We can do some profiling and log the time taken for apis
     const started = Date.now();
     let httpSucceeded: string;
 
+    // Return the cached GET request if there is one
+    if (req.method == 'GET') {
+      const cachedResponse = this.cache.get(req.url);
+      if (cachedResponse) {
+        return of(cachedResponse);
+      }
+    }
+
     // Start executing the request
-    return <Observable<HttpEvent<any>>>next.handle(newReq).pipe(
+    return <Observable<HttpEvent<any>>>next.handle(req).pipe(
       // Retry the http call at least 1 more time before dealing with the error
       retry(2),
       tap(
@@ -82,6 +101,32 @@ export class InterceptorService implements HttpInterceptor {
           this.notificationService.error('400 Error');
           break;
         case 401:
+          // Usually caused by an expired token
+          // if (this.refreshTokenInProgress) {
+          //   // If refreshTokenInProgress is true, we will wait until refreshTokenSubject has a non-null value
+          //   // which means the new token is ready and we can retry the request again
+          //   return this.refreshTokenSubject.pipe(
+          //     filter(result => result !== null),
+          //     take(1),
+          //     // switchMap(() => next.handle(this.addAuthenticationToken(req)))
+          //   );
+          // } else {
+          //   this.refreshTokenInProgress = true;
+
+          //   // Set the refreshTokenSubject to null so that subsequent API calls will wait until the new token has been retrieved
+          //   this.refreshTokenSubject.next(null);
+            
+          //   return this.refreshAccessToken().pipe(
+          //     switchMap((success: boolean) => {               
+          //       this.refreshTokenSubject.next(success);
+          //       return next.handle(this.addAuthenticationToken(req));
+          //     }),
+          //     // When the call to refreshToken completes we reset the refreshTokenInProgress to false
+          //     // for the next time the token needs to be refreshed
+          //     finalize(() => this.refreshTokenInProgress = false)
+          //   );
+          // }
+
           this.notificationService.error('401 Error');
           break;
         case 500:
@@ -90,15 +135,7 @@ export class InterceptorService implements HttpInterceptor {
       }
     }
 
-    // We can use the interceptor to modify all the headers
-    // const modified = req.clone({ 
-    //   setHeaders: { "X-Man": "Wolverine" } 
-    // });
-
-    // this.token = this.facadeService.getUserToken();
-    // if (this.token) {
-    //   const tokenizedReq = req.clone({ headers: req.headers.set('Authorization', 'Bearer ' + this.token) });
-    //   return next.handle(tokenizedReq);
-    // }
-    // return next.handle(req);
+    private refreshAccessToken(): Observable<any> {
+      return of("secret token");
+    }
 }
